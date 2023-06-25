@@ -90,12 +90,17 @@ def imshow_det_bboxes(img,
     mask_colors = []
     if labels.shape[0] > 0:
         if mask_color is None:
+            # Get random state before set seed, and restore random state later.
+            # Prevent loss of randomness.
+            # See: https://github.com/open-mmlab/mmdetection/issues/5844
+            state = np.random.get_state()
             # random color
             np.random.seed(42)
             mask_colors = [
                 np.random.randint(0, 256, (1, 3), dtype=np.uint8)
                 for _ in range(max(labels) + 1)
             ]
+            np.random.set_state(state)
         else:
             # specify  color
             mask_colors = [
@@ -136,30 +141,26 @@ def imshow_det_bboxes(img,
             label] if class_names is not None else f'class {label}'
         if len(bbox) > 4:
             label_text += f'|{bbox[-1]:.02f}'
-        ax.text(
-            bbox_int[0],
-            bbox_int[1],
-            f'{label_text}',
-            bbox={
-                'facecolor': 'black',
-                'alpha': 0.8,
-                'pad': 0.7,
-                'edgecolor': 'none'
-            },
-            color=text_color,
-            fontsize=font_size,
-            verticalalignment='top',
-            horizontalalignment='left')
         if segms is not None:
             color_mask = mask_colors[labels[i]]
             mask = segms[i].astype(bool)
-            img[mask] = img[mask] * 0.5 + color_mask * 0.5
+            padded_mask = np.zeros(
+                (mask.shape[0] + 2, mask.shape[1] + 2), dtype=np.uint8)
+            padded_mask[1:-1, 1:-1] = mask
+            # Ignore masks havin area smaller than threshold
+            min_thres = 0
+            if not len(np.where(padded_mask == True)[0]) >= min_thres:
+                continue
+            from skimage.measure import find_contours
+            contours = find_contours(padded_mask, 0.5)
+            for verts in contours:
+                # Subtract the padding and flip (y, x) to (x, y)
+                verts = np.fliplr(verts) - 1
+                # p = Polygon(verts, facecolor="none", edgecolor=color_val_matplotlib(np.random.randint(0, 256, 3, dtype=np.uint8)))
+                p = Polygon(verts, facecolor="none", edgecolor='lime', linewidth=1.0)
+                ax.add_patch(p)
 
     plt.imshow(img)
-
-    p = PatchCollection(
-        polygons, facecolor='none', edgecolors=color, linewidths=thickness)
-    ax.add_collection(p)
 
     stream, _ = canvas.print_to_buffer()
     buffer = np.frombuffer(stream, dtype='uint8')
@@ -179,8 +180,8 @@ def imshow_det_bboxes(img,
             plt.show(block=False)
             plt.pause(wait_time)
     if out_file is not None:
-        mmcv.imwrite(img, out_file)
-
+        mmcv.imwrite(img, out_file.replace('.png', '_tested.png'))
+        
     plt.close()
 
     return img
